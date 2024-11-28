@@ -1,15 +1,19 @@
 #!/usr/bin/env python3.7
 
+import os
+import re
+import json
 import argparse
 import requests
-from bs4 import BeautifulSoup, Tag
-import json
-import os
 import platform
 import requests
-import re
 import time as t
+from bs4 import BeautifulSoup, Tag
 from datetime import datetime, time
+
+from utils.utils import *
+from utils.cars_utils import *
+from utils.BLACKLIST import BLACKLIST
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--add", dest='name', help="name of new tracking to be added")
@@ -36,6 +40,14 @@ parser.set_defaults(win_notifyoff=False)
 parser.add_argument('--addtoken', dest='token', help="telegram setup: add bot API token")
 parser.add_argument('--addchatid', dest='chatid', help="telegram setup: add bot chat id")
 parser.add_argument('--alt_msg', dest='alt_msg', action='store_true', help="shorter telegram message")
+# CARS INFO
+parser.add_argument('--cars_info', dest='cars_info', action='store_true', help="expand filter options with additional info")
+# parser.add_argument("--condition", help="expected condition for item")
+parser.add_argument("--minDate", default="null", help="minumun registration date for the query")
+parser.add_argument("--maxDate", default="null", help="maximum registration date for the query")
+parser.add_argument("--minKM", default="1", help="maximum KM for the query")
+parser.add_argument("--maxKM", default="1000000", help="minimum KM for the query")
+
 
 args = parser.parse_args()
 
@@ -153,7 +165,26 @@ def delete(toDelete):
     global queries
     queries.pop(toDelete)
 
-def run_query(url, name, notify, minPrice, maxPrice, alt_msg_flag=True):
+def check_product_criteria(product, title, price, minPrice, maxPrice):
+    '''
+        A function to run checks on query criteria.
+    '''
+    for word in str(title.string).split(" "):
+        if word.lower() in BLACKLIST:
+            return False
+
+    if args.cars_info:
+        try:
+            cars_info_match = run_car_check(product, minDate=args.minDate, maxDate=args.maxDate, minKM=args.minKM, maxKM=args.maxKM)
+            if not cars_info_match:
+                return False
+        except:
+            pass
+    
+    price_match = minPrice_check(minPrice=minPrice, price=price) and maxPrice_check(maxPrice=maxPrice, price=price)
+    return True if price_match else False
+
+def run_query(url, name, notify, minPrice, maxPrice):
     '''A function to run a query
 
     Arguments
@@ -185,7 +216,10 @@ def run_query(url, name, notify, minPrice, maxPrice, alt_msg_flag=True):
     msg = []
 
     for product in product_list_items:
+        # Gather relevant information
         title = product.find('h2').string
+        link = product.find('a').get('href')
+
         try:
             price=product.find('p',class_=re.compile(r'price')).contents[0]
             # check if the span tag exists
@@ -196,7 +230,6 @@ def run_query(url, name, notify, minPrice, maxPrice, alt_msg_flag=True):
             price = int(price.replace('.','')[:-2])
         except:
             price = "Unknown price"
-        link = product.find('a').get('href')
 
         sold = product.find('span',re.compile(r'item-sold-badge'))
 
@@ -213,24 +246,29 @@ def run_query(url, name, notify, minPrice, maxPrice, alt_msg_flag=True):
         except:
             print(datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " Unknown location for item %s" % (title))
             location = "Unknown location"
-        if minPrice == "null" or price == "Unknown price" or price>=int(minPrice):
-            if maxPrice == "null" or price == "Unknown price" or price<=int(maxPrice):
-                if not queries.get(name):   # insert the new search
-                    queries[name] = {url:{minPrice: {maxPrice: {link: {'title': title, 'price': price, 'location': location}}}}}
-                    print("\n" + datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " New search added:", name)
-                    print(datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " Adding result:", title, "-", price, "-", location)
-                else:   # add search results to dictionary
-                    if not queries.get(name).get(url).get(minPrice).get(maxPrice).get(link):   # found a new element
-                        tmp = datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " New element found for "+name+": "+title+" @ "+str(price)+" - "+location+" --> "+link+'\n'
-                        alt_msg = (
-                            datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + "\n" 
-                            + str(price) + "\n"
-                            + title + "\n"
-                            + location + "\n"
-                            + link + '\n'
-                        )
-                        msg.append(tmp) if not alt_msg_flag else msg.append(alt_msg)
+
+
+
+        # Assess parameters against query criteria
+        if check_product_criteria(product, title, price, minPrice, maxPrice):
+            if not queries.get(name):   # insert the new search
+                queries[name] = {url:{minPrice: {maxPrice: {link: {'title': title, 'price': price, 'location': location}}}}}
+                print("\n" + datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " New search added:", name)
+                print(datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " Adding result:", title, "-", price, "-", location)
+            else:   # add search results to dictionary
+                if not queries.get(name).get(url).get(minPrice).get(maxPrice).get(link):   # found a new element
+                    tmp = datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " New element found for "+name+": "+title+" @ "+str(price)+" - "+location+" --> "+link+'\n'
+                    alt_msg = (
+                        datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + "\n"
+                        + str(price) + " €\n"
+                        + title + "\n"
+                        + location + "\n"
+                        + link + '\n'
+                    )
+                    msg.append(tmp) if not args.alt_msg else msg.append(alt_msg)
+                    if args.cars_info:
                         queries[name][url][minPrice][maxPrice][link] ={'title': title, 'price': price, 'location': location}
+                    queries[name][url][minPrice][maxPrice][link] ={'title': title, 'price': price, 'location': location}
 
     if len(msg) > 0:
         if notify:
@@ -329,7 +367,7 @@ if __name__ == '__main__':
         print_sitrep()
 
     if args.url is not None and args.name is not None:
-        run_query(args.url, args.name, False, args.minPrice if args.minPrice is not None else "null", args.maxPrice if args.maxPrice is not None else "null", args.alt_msg)
+        run_query(args.url, args.name, False, args.minPrice if args.minPrice is not None else "null", args.maxPrice if args.maxPrice is not None else "null",)
         print(datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " Query added.")
 
     if args.delete is not None:
