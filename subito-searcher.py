@@ -35,6 +35,7 @@ parser.add_argument('--notifyoff', dest='win_notifyoff', action='store_true', he
 parser.set_defaults(win_notifyoff=False)
 parser.add_argument('--addtoken', dest='token', help="telegram setup: add bot API token")
 parser.add_argument('--addchatid', dest='chatid', help="telegram setup: add bot chat id")
+parser.add_argument('--alt_msg', dest='alt_msg', action='store_true', help="shorter telegram message")
 
 args = parser.parse_args()
 
@@ -152,7 +153,7 @@ def delete(toDelete):
     global queries
     queries.pop(toDelete)
 
-def run_query(url, name, notify, minPrice, maxPrice):
+def run_query(url, name, notify, minPrice, maxPrice, alt_msg_flag=True):
     '''A function to run a query
 
     Arguments
@@ -221,7 +222,14 @@ def run_query(url, name, notify, minPrice, maxPrice):
                 else:   # add search results to dictionary
                     if not queries.get(name).get(url).get(minPrice).get(maxPrice).get(link):   # found a new element
                         tmp = datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " New element found for "+name+": "+title+" @ "+str(price)+" - "+location+" --> "+link+'\n'
-                        msg.append(tmp)
+                        alt_msg = (
+                            datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + "\n" 
+                            + str(price) + "\n"
+                            + title + "\n"
+                            + location + "\n"
+                            + link + '\n'
+                        )
+                        msg.append(tmp) if not alt_msg_flag else msg.append(alt_msg)
                         queries[name][url][minPrice][maxPrice][link] ={'title': title, 'price': price, 'location': location}
 
     if len(msg) > 0:
@@ -321,7 +329,7 @@ if __name__ == '__main__':
         print_sitrep()
 
     if args.url is not None and args.name is not None:
-        run_query(args.url, args.name, False, args.minPrice if args.minPrice is not None else "null", args.maxPrice if args.maxPrice is not None else "null",)
+        run_query(args.url, args.name, False, args.minPrice if args.minPrice is not None else "null", args.maxPrice if args.maxPrice is not None else "null", args.alt_msg)
         print(datetime.now().strftime("%Y-%m-%d, %H:%M:%S") + " Query added.")
 
     if args.delete is not None:
